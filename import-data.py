@@ -1,8 +1,9 @@
 import mysql.connector
 import pandas as pd
 import numpy as np
+from sys import stdout
 
-# Conexão com MySQL
+# ----- Conexão com MySQL
 try:
     conn = mysql.connector.connect(host='localhost',
                                    database='DW',
@@ -14,11 +15,11 @@ except mysql.connector.Error as err:
 
 print('Connected to database!')
 
-# Criação do cursor
-cursor = conn.cursor()
+# ----- Criação do cursor
+cursor = conn.cursor(buffered=True)
 
-# Leitura dados votos
-data = pd.read_csv('./data/2022-SC.csv', sep=';', encoding='cp1252', nrows=10,
+# ----- Leitura dados votos
+data = pd.read_csv('./data/2022-SC.csv', sep=';', encoding='cp1252', nrows=1000, # Número de linhas a serem lidas para testes
                    usecols=['ANO_ELEICAO', 'NR_TURNO', 'SG_UF', 'NM_MUNICIPIO',
                             'NR_ZONA', 'NR_SECAO', 'DS_CARGO_PERGUNTA', 'NR_VOTAVEL', 
                             'SG_PARTIDO', 'NM_VOTAVEL', 'QT_VOTOS', 'QT_COMPARECIMENTO',
@@ -26,10 +27,12 @@ data = pd.read_csv('./data/2022-SC.csv', sep=';', encoding='cp1252', nrows=10,
                    dtype={'ANO_ELEICAO': np.int16, 'NR_TURNO': np.int8, 'NR_ZONA': np.int32,
                           'NR_SECAO': np.int32, 'NR_VOTAVEL': str, 'QT_VOTOS': np.int16, 
                           'QT_COMPARECIMENTO': np.int32})
-data['DS_CARGO_PERGUNTA'] = data['DS_CARGO_PERGUNTA'].str.upper()
+data_size = len(data)                          
+data['DS_CARGO_PERGUNTA'] = data['DS_CARGO_PERGUNTA'].str.upper() # Cargo CAIXA ALTA
 print(f'File:\n{data}\n')
 
-# Leitura candidatos
+# ----- Leitura candidatos
+print("Candidatos:")
 candidatos = pd.read_csv('./data/2022-candidatos.csv', sep=';', encoding='cp1252',
                           usecols=['DS_CARGO', 'NM_URNA_CANDIDATO', 'NR_CPF_CANDIDATO',
                                    'SG_PARTIDO', 'NR_CANDIDATO'],
@@ -37,33 +40,53 @@ candidatos = pd.read_csv('./data/2022-candidatos.csv', sep=';', encoding='cp1252
 
 print(f'\n{candidatos}\n')
 
-# Insere eleição
+# ----- Insere eleição
 ano = data['ANO_ELEICAO'][0]
 cursor.execute(f'INSERT INTO eleicao (ano) \
                  SELECT * FROM (SELECT {ano} AS ano) AS tmp \
                  WHERE NOT EXISTS (SELECT ano FROM eleicao WHERE ano={ano})')
 
-# Iterar sobre votos
+# Obter id do turno
+cursor.execute(f"SELECT id FROM turno WHERE numero={data.iloc[0]['NR_TURNO']}")
+turno_id = cursor.fetchone()[0]
+
+# Obtém id da eleição
+cursor.execute(f"SELECT id FROM eleicao WHERE ano={ano}")
+eleicao_id = cursor.fetchone()[0]
+
+# Inicializa variáveis para otimização
+local_id, uf, municipio, zona, secao = "", "", "", "", ""
+
+# ----- Iterar sobre votos
 for index, row in data.iterrows():
+    stdout.write(f"\r{index+1}/{data_size}")
+    stdout.flush()
+
     # Aceita apenas votos Nominal, Nulo e Branco
     tipo_votavel = row['DS_TIPO_VOTAVEL']
     if tipo_votavel not in ('Nominal', 'Nulo', 'Branco'):
         continue
-
-    # Insere local
-    uf, municipio, zona, secao = row['SG_UF'], row['NM_MUNICIPIO'], row['NR_ZONA'], row['NR_SECAO']
-    cursor.execute(f"INSERT INTO local (pais, uf, municipio, zona, secao) \
-                     SELECT * FROM (SELECT 'Brasil' AS pais, '{uf}' AS uf, \
-                                           '{municipio}' AS municipio, '{zona}' AS zona, \
-                                           '{secao}' AS secao) AS tmp \
-                     WHERE NOT EXISTS (SELECT pais, uf, municipio, zona, secao FROM local \
-                                       WHERE pais='Brasil' AND uf='{uf}' AND \
-                                             municipio='{municipio}' AND zona='{zona}' AND \
-                                             secao='{secao}')")
     
-    # Insere candidato e candidatura
-    nome, cargo, = row['NM_VOTAVEL'].replace("'", " "), row['DS_CARGO_PERGUNTA']
-    partido, numero = row['SG_PARTIDO'], row['NR_VOTAVEL']
+    # --- Insere local somente se for diferente do anterior para otimização
+    if (uf, municipio, zona, secao) != (row['SG_UF'], row['NM_MUNICIPIO'], row['NR_ZONA'], row['NR_SECAO']):
+        uf, municipio, zona, secao = row['SG_UF'], row['NM_MUNICIPIO'], row['NR_ZONA'], row['NR_SECAO']
+        cursor.execute(f"INSERT INTO local (pais, uf, municipio, zona, secao) \
+                        SELECT * FROM (SELECT 'Brasil' AS pais, '{uf}' AS uf, \
+                                            '{municipio}' AS municipio, '{zona}' AS zona, \
+                                            '{secao}' AS secao) AS tmp \
+                        WHERE NOT EXISTS (SELECT pais, uf, municipio, zona, secao FROM local \
+                                        WHERE pais='Brasil' AND uf='{uf}' AND \
+                                                municipio='{municipio}' AND zona='{zona}' AND \
+                                                secao='{secao}')")
+        # Obter id do local
+        cursor.execute(f"SELECT id FROM local \
+                         WHERE pais='Brasil' AND uf='{uf}' AND municipio='{municipio}' AND \
+                               zona='{zona}' AND secao='{secao}'")
+        local_id = cursor.fetchone()[0]
+    
+    # --- Insere candidato e candidatura
+    nome = row['NM_VOTAVEL'].replace("'", " ").replace("ª", ".").replace("º", ".")
+    partido, numero, cargo = row['SG_PARTIDO'], row['NR_VOTAVEL'], row['DS_CARGO_PERGUNTA']
 
     if tipo_votavel in ('Nulo', 'Branco'):
         cpf = cargo # Somente um candidato Branco e um Nulo por cargo
@@ -80,18 +103,16 @@ for index, row in data.iterrows():
 
         cpf = candidato.iloc[0]['NR_CPF_CANDIDATO']
 
-    # Insere candidato
+    # --- Insere candidato
     cursor.execute(f"INSERT INTO candidato (cpf, nome) \
                      SELECT * FROM (SELECT '{cpf}' AS cpf, '{nome}' AS nome) AS tmp \
                      WHERE NOT EXISTS (SELECT cpf, nome FROM candidato \
                                        WHERE cpf='{cpf}' AND nome='{nome}')")
     
-    # Insere candidatura
+    # --- Insere candidatura
+    # Obtém id do candidato
     cursor.execute(f"SELECT id FROM candidato WHERE cpf='{cpf}' AND nome='{nome}'")
     candidato_id = cursor.fetchone()[0]
-
-    cursor.execute(f"SELECT id FROM eleicao WHERE ano={ano}")
-    eleicao_id = cursor.fetchone()[0]
 
     cursor.execute(f"INSERT INTO candidatura \
                      SELECT * FROM \
@@ -101,6 +122,18 @@ for index, row in data.iterrows():
                      WHERE NOT EXISTS (SELECT * FROM candidatura \
                                        WHERE candidato_id={candidato_id} AND \
                                              eleicao_id={eleicao_id})")
+    
+    # --- Inserir tabela fato sem atributos derivados    
+    # Insere fato somente com quantidade
+    cursor.execute(f"INSERT INTO voto \
+                     SELECT * FROM \
+                        (SELECT {turno_id} AS turno_id, {eleicao_id} AS eleicao_id, \
+                                {candidato_id} AS candidato_id, {local_id} AS local_id, \
+                                {row['QT_VOTOS']} AS quantidade, NULL AS porcentagem_cargo, \
+                                NULL AS porcentagem_valido_cargo) AS tmp \
+                     WHERE NOT EXISTS (SELECT * FROM voto \
+                                       WHERE turno_id={turno_id} AND eleicao_id={eleicao_id} AND \
+                                             candidato_id={candidato_id} AND local_id={local_id})")
 
 conn.commit()
 conn.close()
