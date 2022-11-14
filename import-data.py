@@ -211,7 +211,7 @@ for index, row in data.iterrows():
         time_last = (data_size/(index+1)) * (time.time() - start_time)
         time_last = timedelta(seconds=time_last)
 
-    stdout.write(f"\r{index+1}/{data_size}: {time_last} restantes")
+    stdout.write(f"\r{index+1}/{data_size}: {time_last} restantes\n")
     stdout.flush()
 
 print(f"\nTempo de execução: {timedelta(seconds=(time.time() - start_time))}")
