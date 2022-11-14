@@ -64,9 +64,25 @@ local_id, uf, municipio, zona, secao = "", "", "", "", ""
 votos = []
 start_time = time.time()
 
+print("Calculando votos totais de cada cargo...")
+
+cargos = ["PRESIDENTE", "GOVERNADOR", "DEPUTADO FEDERAL", "DEPUTADO ESTADUAL", "SENADOR"]
+votos_por_cargo = {}
+
+for cargo in cargos:
+    votos_por_cargo[cargo] = {
+        "validos": round(data.where((data['DS_CARGO_PERGUNTA'] == cargo) & (data['DS_TIPO_VOTAVEL'] == 'Nominal'))['QT_VOTOS'].sum()),
+        "nulos": round(data.where((data['DS_CARGO_PERGUNTA'] == cargo) & (data['DS_TIPO_VOTAVEL'] == 'Nulo'))['QT_VOTOS'].sum()),
+        "brancos": round(data.where((data['DS_CARGO_PERGUNTA'] == cargo) & (data['DS_TIPO_VOTAVEL'] == 'Branco'))['QT_VOTOS'].sum()),
+        "totais": round(data.where(data['DS_CARGO_PERGUNTA'] == cargo)['QT_VOTOS'].sum())
+    }
+    print(f"[{cargo}]", "VALIDOS:", votos_por_cargo[cargo]["validos"], "| TOTAIS:", votos_por_cargo[cargo]["totais"], "| BRANCOS:", votos_por_cargo[cargo]["brancos"], "| NULOS:", votos_por_cargo[cargo]["nulos"])
+
+porcentagens_candidatos = {}
+
 # ----- Iterar sobre votos
 for index, row in data.iterrows():
-    stdout.write(f"\r{index+1}/{data_size}")
+    stdout.write(f"\r[{index+1}/{data_size}]\n")
     stdout.flush()
 
     # Aceita apenas votos Nominal, Nulo e Branco
@@ -94,6 +110,23 @@ for index, row in data.iterrows():
     # --- Insere candidato e candidatura
     nome = row['NM_VOTAVEL'].replace("'", " ").replace("ª", ".").replace("º", ".")
     partido, numero, cargo = row['SG_PARTIDO'], row['NR_VOTAVEL'], row['DS_CARGO_PERGUNTA']
+
+    # Soma dos votos totais do candidato caso já não tenha sido calculado
+    if nome not in porcentagens_candidatos:
+        votos_candidato = round(data.where((data['NM_VOTAVEL'] == row['NM_VOTAVEL']))['QT_VOTOS'].sum())
+        
+        # Calcular as porcentagens de voto (total e valido) do candidato
+        porcentagem_cargo = round((votos_candidato / votos_por_cargo[cargo]["totais"])*100, 2)
+
+        if tipo_votavel == "Nominal":
+            porcentagem_valido_cargo = round((votos_candidato / votos_por_cargo[cargo]["validos"])*100, 2)      
+        else:
+            porcentagem_valido_cargo = None
+
+        print(f"CANDIDATO {cargo}:", nome, votos_candidato, f"{porcentagem_cargo}%")
+
+        # Inserir as respectivas porcentagens do candidato no dict 
+        porcentagens_candidatos[nome] = {"total": porcentagem_cargo, "valido": porcentagem_valido_cargo}
 
     if tipo_votavel in ('Nulo', 'Branco'):
         cpf = cargo + tipo_votavel[0] # Somente um candidato Branco e um Nulo por cargo
@@ -138,7 +171,7 @@ for index, row in data.iterrows():
         candidato_id = candidato_ids[cpfs.index(cpf)]
 
     votos.append((turno_id, eleicao_id, candidato_id, local_id, row['QT_VOTOS'],
-                  None, None, turno_id, eleicao_id, candidato_id, local_id
+                  porcentagens_candidatos[nome]["total"], porcentagens_candidatos[nome]["valido"], turno_id, eleicao_id, candidato_id, local_id
         ))
 
     if index and index % 1000 == 0:
