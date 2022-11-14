@@ -68,20 +68,6 @@ local_id, uf, municipio, zona, secao = "", "", "", "", ""
 votos = []
 start_time = time.time()
 
-print("Calculando votos totais de cada cargo...")
-
-cargos = ["PRESIDENTE", "GOVERNADOR", "DEPUTADO FEDERAL", "DEPUTADO ESTADUAL", "SENADOR"]
-votos_por_cargo = {}
-
-for cargo in cargos:
-    votos_por_cargo[cargo] = {
-        "validos": round(data.where((data['DS_CARGO_PERGUNTA'] == cargo) & (data['DS_TIPO_VOTAVEL'] == 'Nominal'))['QT_VOTOS'].sum()),
-        "nulos": round(data.where((data['DS_CARGO_PERGUNTA'] == cargo) & (data['DS_TIPO_VOTAVEL'] == 'Nulo'))['QT_VOTOS'].sum()),
-        "brancos": round(data.where((data['DS_CARGO_PERGUNTA'] == cargo) & (data['DS_TIPO_VOTAVEL'] == 'Branco'))['QT_VOTOS'].sum()),
-        "totais": round(data.where(data['DS_CARGO_PERGUNTA'] == cargo)['QT_VOTOS'].sum())
-    }
-    print(f"[{cargo}]", "VALIDOS:", votos_por_cargo[cargo]["validos"], "| TOTAIS:", votos_por_cargo[cargo]["totais"], "| BRANCOS:", votos_por_cargo[cargo]["brancos"], "| NULOS:", votos_por_cargo[cargo]["nulos"])
-
 porcentagens_candidatos = {}
 
 # ----- Iterar sobre votos
@@ -112,16 +98,22 @@ for index, row in data.iterrows():
     # --- Insere candidato e candidatura
     nome = row['NM_VOTAVEL'].replace("'", " ").replace("ª", ".").replace("º", ".")
     partido, numero, cargo = row['SG_PARTIDO'], row['NR_VOTAVEL'], row['DS_CARGO_PERGUNTA']
+    total_votos = row['QT_COMPARECIMENTO']
+
+    votos_invalidos = data.where((data['NR_SECAO'] == secao) & (data['NR_ZONA'] == zona) & (data['DS_CARGO_PERGUNTA'] == cargo) \
+                                     & (data['DS_TIPO_VOTAVEL'] != 'Nominal'))['QT_VOTOS'].sum()
+    total_votos_validos = total_votos - votos_invalidos
 
     # Soma dos votos totais do candidato caso já não tenha sido calculado
     if nome not in porcentagens_candidatos:
-        votos_candidato = round(data.where((data['NM_VOTAVEL'] == row['NM_VOTAVEL']))['QT_VOTOS'].sum())
+        votos_candidato = round(data.where((data['NM_VOTAVEL'] == row['NM_VOTAVEL']) & (data['NR_SECAO'] == secao) \
+                                             & (data['NR_ZONA'] == zona))['QT_VOTOS'].sum())
         
         # Calcular as porcentagens de voto (total e valido) do candidato
-        porcentagem_cargo = round((votos_candidato / votos_por_cargo[cargo]["totais"])*100, 2)
+        porcentagem_cargo = round((votos_candidato / total_votos)*100, 2)
 
         if tipo_votavel == "Nominal":
-            porcentagem_valido_cargo = round((votos_candidato / votos_por_cargo[cargo]["validos"])*100, 2)      
+            porcentagem_valido_cargo = round((votos_candidato / total_votos_validos)*100, 2)      
         else:
             porcentagem_valido_cargo = None
 
