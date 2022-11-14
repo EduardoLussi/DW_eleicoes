@@ -3,6 +3,10 @@ import pandas as pd
 import numpy as np
 from sys import stdout
 import time
+from datetime import timedelta
+
+BUFFER_SIZE = 1000  # Tamanho do buffer de registros a serem inseridos ao mesmo tempo
+SAVE_POINT = 50000  # Commit a cada SAVE_POINT registros lidos
 
 cpfs = []
 candidato_ids = []
@@ -82,8 +86,6 @@ porcentagens_candidatos = {}
 
 # ----- Iterar sobre votos
 for index, row in data.iterrows():
-    stdout.write(f"\r[{index+1}/{data_size}]\n")
-    stdout.flush()
 
     # Aceita apenas votos Nominal, Nulo e Branco
     tipo_votavel = row['DS_TIPO_VOTAVEL']
@@ -146,24 +148,36 @@ for index, row in data.iterrows():
     # Insere candidato e candidatura somente se já não estiver inserido
     if cpf not in cpfs:
         # --- Insere candidato
-        cursor.execute(f"INSERT INTO candidato (cpf, nome) \
-                        SELECT * FROM (SELECT '{cpf}' AS cpf, '{nome}' AS nome) AS tmp \
-                        WHERE NOT EXISTS (SELECT cpf, nome FROM candidato \
-                                        WHERE cpf='{cpf}' AND nome='{nome}')")
-        
-        # --- Insere candidatura
-        # Obtém id do candidato
-        cursor.execute(f"SELECT id FROM candidato WHERE cpf='{cpf}' AND nome='{nome}'")
-        candidato_id = cursor.fetchone()[0]
+        cursor.execute(f"SELECT id, nome FROM candidato WHERE cpf='{cpf}'")
+        curr_candidato = cursor.fetchone()
 
+        if curr_candidato:    # Candidato já cadastrado
+            candidato_id = curr_candidato[0]
+            if curr_candidato[1] != nome: # Candidato mudou de nome, tratar SCD
+                cursor.execute(f"UPDATE candidato SET nome='{nome}' WHERE cpf='{cpf}'")
+                cursor.execute(f'INSERT INTO candidato_scd (nome, candidato_id) \
+                                 VALUES ("{nome}", {candidato_id})')
+        else:           # Candidato ainda não foi cadastrado
+            cursor.execute(f"INSERT INTO candidato (cpf, nome) \
+                             SELECT * FROM (SELECT '{cpf}' AS cpf, '{nome}' AS nome) AS tmp \
+                             WHERE NOT EXISTS (SELECT cpf, nome FROM candidato \
+                                               WHERE cpf='{cpf}' AND nome='{nome}')")
+            # Obtém id do candidato
+            cursor.execute(f"SELECT id FROM candidato WHERE cpf='{cpf}' AND nome='{nome}'")
+            candidato_id = cursor.fetchone()[0]
+
+            cursor.execute(f'INSERT INTO candidato_scd (nome, candidato_id) \
+                             VALUES ("{nome}", {candidato_id})')
+
+        # --- Insere candidatura
         cursor.execute(f"INSERT INTO candidatura \
-                        SELECT * FROM \
+                         SELECT * FROM \
                             (SELECT {candidato_id} AS candidato_id, {eleicao_id} AS eleicao_id, \
                                     '{cargo}' AS cargo, '{partido}' AS partido, \
                                     '{numero}' AS numero) AS tmp \
-                        WHERE NOT EXISTS (SELECT * FROM candidatura \
-                                        WHERE candidato_id={candidato_id} AND \
-                                                eleicao_id={eleicao_id})")
+                         WHERE NOT EXISTS (SELECT * FROM candidatura \
+                                           WHERE candidato_id={candidato_id} AND \
+                                                 eleicao_id={eleicao_id})")
     
         cpfs.append(cpf)
         candidato_ids.append(candidato_id)
@@ -174,7 +188,7 @@ for index, row in data.iterrows():
                   porcentagens_candidatos[nome]["total"], porcentagens_candidatos[nome]["valido"], turno_id, eleicao_id, candidato_id, local_id
         ))
 
-    if index and index % 1000 == 0:
+    if index and index % BUFFER_SIZE == 0:
         # --- Inserir tabela fato sem atributos derivados          
         sql = f"INSERT INTO voto \
                     SELECT * FROM \
@@ -190,9 +204,17 @@ for index, row in data.iterrows():
         cursor.executemany(sql, votos)
         votos.clear()
     
-    if index % 50000 == 0:
+    if index and index % SAVE_POINT == 0:
         conn.commit()
-print(f"\nTempo de execução: {time.time() - start_time:.2f}s")
+
+    if index % 100 == 0:
+        time_last = (data_size/(index+1)) * (time.time() - start_time)
+        time_last = timedelta(seconds=time_last)
+
+    stdout.write(f"\r{index+1}/{data_size}: {time_last} restantes")
+    stdout.flush()
+
+print(f"\nTempo de execução: {timedelta(seconds=(time.time() - start_time))}")
 
 conn.commit()
 conn.close()

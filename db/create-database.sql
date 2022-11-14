@@ -130,7 +130,7 @@ ENGINE = InnoDB;
 -- Table `DW`.`candidato_scd`
 -- -----------------------------------------------------
 CREATE TABLE IF NOT EXISTS `DW`.`candidato_scd` (
-  `id` INT NOT NULL,
+  `id` INT NOT NULL AUTO_INCREMENT,
   `nome` VARCHAR(45) NULL,
   `data` DATETIME NULL DEFAULT NOW(),
   `candidato_id` INT NOT NULL,
