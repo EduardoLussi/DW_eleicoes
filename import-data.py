@@ -75,8 +75,8 @@ for index, row in data.iterrows():
         continue
     
     # --- Insere local somente se for diferente do anterior para otimização
-    if (uf, municipio, zona, secao) != (row['SG_UF'], row['NM_MUNICIPIO'], row['NR_ZONA'], row['NR_SECAO']):
-        uf, municipio, zona, secao = row['SG_UF'], row['NM_MUNICIPIO'], row['NR_ZONA'], row['NR_SECAO']
+    if (uf, municipio, zona, secao) != (row['SG_UF'], row['NM_MUNICIPIO'].replace("'", " "), row['NR_ZONA'], row['NR_SECAO']):
+        uf, municipio, zona, secao = row['SG_UF'], row['NM_MUNICIPIO'].replace("'", " "), row['NR_ZONA'], row['NR_SECAO']
         cursor.execute(f"INSERT INTO local (pais, uf, municipio, zona, secao) \
                         SELECT * FROM (SELECT 'Brasil' AS pais, '{uf}' AS uf, \
                                             '{municipio}' AS municipio, '{zona}' AS zona, \
@@ -164,7 +164,7 @@ for index, row in data.iterrows():
                     WHERE NOT EXISTS (SELECT * FROM voto \
                                     WHERE turno_id=%s AND eleicao_id=%s AND \
                                             candidato_id=%s AND local_id=%s);"
-                
+
         # Insere fato somente com quantidade
         cursor.executemany(sql, votos)
         votos.clear()
@@ -173,11 +173,12 @@ for index, row in data.iterrows():
         conn.commit()
 
     if index % 100 == 0:
-        time_last = (data_size/(index+1)) * (time.time() - start_time)
+        time_elapsed = time.time() - start_time
+        time_last = ((data_size/(index+1)) * time_elapsed) - time_elapsed
         time_last = timedelta(seconds=time_last)
 
-    stdout.write(f"\r{index+1}/{data_size}: {time_last} restantes")
-    stdout.flush()
+        stdout.write(f"\r{((index+1)/data_size)*100:.1f}% | {index+1}/{data_size} items | {time_last} restantes")
+        stdout.flush()
 
 print(f"\nTempo de execução: {timedelta(seconds=(time.time() - start_time))}")
 
