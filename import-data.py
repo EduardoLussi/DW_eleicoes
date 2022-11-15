@@ -27,7 +27,7 @@ print('Connected to database!')
 cursor = conn.cursor(buffered=True)
 
 # ----- Leitura dados votos
-data = pd.read_csv('./data/2022-SC.csv', sep=';', encoding='cp1252', # Número de linhas a serem lidas para testes
+data = pd.read_csv('./data/2022-SC.csv', sep=';', encoding='cp1252', nrows=10000 # Número de linhas a serem lidas para testes
                    usecols=['ANO_ELEICAO', 'NR_TURNO', 'SG_UF', 'NM_MUNICIPIO',
                             'NR_ZONA', 'NR_SECAO', 'DS_CARGO_PERGUNTA', 'NR_VOTAVEL', 
                             'SG_PARTIDO', 'NM_VOTAVEL', 'QT_VOTOS', 'QT_COMPARECIMENTO',
@@ -64,11 +64,17 @@ eleicao_id = cursor.fetchone()[0]
 
 # Inicializa variáveis para otimização
 local_id, uf, municipio, zona, secao = "", "", "", "", ""
+total_votos, votos_invalidos = 1, 0
+total_votos_validos = total_votos - votos_invalidos
 
 votos = []
 start_time = time.time()
+
+porcentagens_candidatos = {}
+
 # ----- Iterar sobre votos
 for index, row in data.iterrows():
+
     # Aceita apenas votos Nominal, Nulo e Branco
     tipo_votavel = row['DS_TIPO_VOTAVEL']
     if tipo_votavel not in ('Nominal', 'Nulo', 'Branco'):
@@ -91,14 +97,28 @@ for index, row in data.iterrows():
                                zona='{zona}' AND secao='{secao}'")
         local_id = cursor.fetchone()[0]
     
+        total_votos = row['QT_COMPARECIMENTO']
+
     # --- Insere candidato e candidatura
     nome = row['NM_VOTAVEL'].replace("'", " ").replace("ª", ".").replace("º", ".")
     partido, numero, cargo = row['SG_PARTIDO'], row['NR_VOTAVEL'], row['DS_CARGO_PERGUNTA']
 
+    # Calcular as porcentagens de voto (total e valido) do candidato
+    votos_candidato = row['QT_VOTOS']
+    votos_invalidos = data.loc[(data['NR_SECAO'] == secao) & (data['NR_ZONA'] == zona) & (data['DS_CARGO_PERGUNTA'] == cargo) \
+                            & (data['DS_TIPO_VOTAVEL'] == 'Nulo')].iloc[0]['QT_VOTOS']
+    votos_invalidos += data.loc[(data['NR_SECAO'] == secao) & (data['NR_ZONA'] == zona) & (data['DS_CARGO_PERGUNTA'] == cargo) \
+                                & (data['DS_TIPO_VOTAVEL'] == 'Branco')].iloc[0]['QT_VOTOS']
+    total_votos_validos = total_votos - votos_invalidos
+    porcentagem_cargo = (votos_candidato / total_votos)*100
+
     if tipo_votavel in ('Nulo', 'Branco'):
         cpf = cargo + tipo_votavel[0] # Somente um candidato Branco e um Nulo por cargo
         partido = nome # Partido de Branco é Branco, de Nulo é Nulo
+        porcentagem_valido_cargo = None
     else:
+        porcentagem_valido_cargo = (votos_candidato / total_votos_validos)*100  
+
         # Obtém informações do candidato
         candidato = candidatos.loc[(candidatos['NM_URNA_CANDIDATO'] == nome) & 
                                    (candidatos['DS_CARGO'] == cargo) & 
@@ -150,7 +170,7 @@ for index, row in data.iterrows():
         candidato_id = candidato_ids[cpfs.index(cpf)]
 
     votos.append((turno_id, eleicao_id, candidato_id, local_id, row['QT_VOTOS'],
-                  None, None, turno_id, eleicao_id, candidato_id, local_id
+                  porcentagem_cargo, porcentagem_valido_cargo, turno_id, eleicao_id, candidato_id, local_id
         ))
 
     if index and index % BUFFER_SIZE == 0:
@@ -177,8 +197,8 @@ for index, row in data.iterrows():
         time_last = ((data_size/(index+1)) * time_elapsed) - time_elapsed
         time_last = timedelta(seconds=time_last)
 
-        stdout.write(f"\r{((index+1)/data_size)*100:.1f}% | {index+1}/{data_size} items | {time_last} restantes")
-        stdout.flush()
+    stdout.write(f"\r{((index+1)/data_size)*100:.1f}% | {index+1}/{data_size} items | {time_last} restantes")
+    stdout.flush()
 
 print(f"\nTempo de execução: {timedelta(seconds=(time.time() - start_time))}")
 
